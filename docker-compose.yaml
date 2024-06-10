@@ -1,0 +1,100 @@
+# add `127.0.0.1 host.docker.internal` to host's /etc/hosts
+
+services:
+  mongo:
+    image: mongo:6.0.15
+    container_name: mongo
+    restart: unless-stopped
+    ports:
+      - 27017:27017
+    healthcheck:
+      test: echo "try { rs.initiate({_id:'rs0',members:[{_id:0,host:'host.docker.internal:27017'}]}) } catch (err) {}" | mongosh --port 27017 --quiet
+      # interval: 30s
+      # timeout: 30s
+      start_period: 10s
+      # start_interval: 1s
+      # retries: 30
+    command: ['--replSet', 'rs0', '--bind_ip_all', '--port', '27017']
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    volumes:
+      - './.volumes/mongo/data:/data/db'
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    restart: unless-stopped
+    ports:
+      - '9092:9092' # for clients (producers, consumers)
+    volumes:
+      - './.volumes/kafka/data:/var/lib/kafka/data'
+    environment:
+      CLUSTER_ID: 'r4zt_wrqTRuT7W2NJsB_GA'
+      KAFKA_ENABLE_KRAFT: 'yes'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_LISTENERS: CONTROLLER://:9093,LISTENER://:9092,INTER_LISTENER://:29092
+      KAFKA_ADVERTISED_LISTENERS: LISTENER://127.0.0.1:9092,INTER_LISTENER://:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,LISTENER:PLAINTEXT,INTER_LISTENER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTER_LISTENER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 # for local env only
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0 # for local env only
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_BROKER_ID: 1
+
+  kafka-connect:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM confluentinc/cp-kafka-connect:7.6.1
+        RUN confluent-hub install --no-prompt --verbose mongodb/kafka-connect-mongodb:latest
+        ENV CONNECT_PLUGIN_PATH="/usr/share/java,/usr/share/confluent-hub-components"
+    container_name: kafka-connect
+    restart: unless-stopped
+    ports:
+      - 8083:8083
+    depends_on:
+      - kafka
+      - mongo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # KAFKA_JMX_PORT: 35000
+      # KAFKA_JMX_HOSTNAME: localhost
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:29092"
+      CONNECT_REST_ADVERTISED_HOST_NAME: localhost
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: connect-cluster-group
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1 # for local env only
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 10000
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1 # for local env only
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1 # for local env only
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      CONNECT_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+    # command:
+    #   - bash
+    #   - -c
+    #   - |
+    #     #
+    #     echo "Launching Kafka Connect worker"
+    #     /etc/confluent/docker/run &
+
+    #     #
+    #     echo "Waiting for Kafka Connect to start listening on 127.0.0.1 ⏳"
+    #     while : ; do
+    #       curl_status=$$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8083/connectors)
+    #       echo -e $$(date) " Kafka Connect listener HTTP state: " $$curl_status " (waiting for 200)"
+    #       if [ $$curl_status -eq 200 ] ; then
+    #         break
+    #       fi
+    #       sleep 5
+    #     done
+    #     echo -e "\n--\n+> Creating connector"
+    #     curl -X PUT -H  "Content-Type:application/json" http://127.0.0.1:8083/connectors/mongo-connector/config \
+    #         --data '{"change.stream.full.document.before.change":"whenAvailable","change.stream.full.document":"updateLookup","connector.class":"com.mongodb.kafka.connect.MongoSourceConnector","topic.prefix":"mongo","connection.uri":"mongodb://host.docker.internal:27017/?replicaSet=rs0"}'
+    #     sleep infinity

@@ -5,7 +5,7 @@ const config = {
   'change.stream.full.document.before.change': 'whenAvailable',
   'change.stream.full.document': 'updateLookup',
   'connector.class': 'com.mongodb.kafka.connect.MongoSourceConnector',
-  'topic.prefix': 'mongo',
+  'topic.prefix': 'mongo', // mongo.db.collection
   'connection.uri': 'mongodb://host.docker.internal:27017/?replicaSet=rs0',
 };
 

@@ -28,6 +28,7 @@ consumer.on('event.error', function (err) {
 consumer.on('ready', function (arg) {
   console.log('consumer ready.' + JSON.stringify(arg));
 
+  // consumer.subscribe([/^mongo\.erxes(_.+)?\.bbb$/]);
   consumer.subscribe([/^mongo\.erxes_?/]);
   //start consuming messages
   consumer.consume();
